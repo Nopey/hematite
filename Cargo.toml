@@ -1,7 +1,7 @@
 [package]
 
 name = "hematite"
-version = "0.0.34"
+version = "0.0.35"
 license = "MIT"
 authors = ["bvssvni <bvssvni@gmail.com>"]
 keywords = ["minecraft", "piston", "client"]
@@ -19,20 +19,28 @@ debug = false
 name = "hematite"
 path = "src/main.rs"
 
+[features]
+# TODO: more reasonable default
+default = ["vulkan"]
+local = ["wgpu-native/local", "piston3d-gfx_voxel/local"]
+metal = ["wgpu/metal", "piston3d-gfx_voxel/metal"]
+dx11 = ["wgpu/dx11", "piston3d-gfx_voxel/dx11"]
+dx12 = ["wgpu/dx12", "piston3d-gfx_voxel/dx12"]
+vulkan = ["wgpu/vulkan", "piston3d-gfx_voxel/vulkan"]
+
 [dependencies]
 byteorder = "1.0.0"
 camera_controllers = "0.27.0"
 docopt = "0.6.78"
 flate2 = "0.2.13"
 fps_counter = "1.0.0"
-gfx = "0.17.0"
-gfx_core = "0.8.0"
-gfx_device_gl = "0.15.0"
+wgpu-native = { git = "https://github.com/gfx-rs/wgpu" }
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 libc = "0.2.7"
 memmap = "0.2.3"
 piston = "0.42.0"
-piston3d-gfx_voxel = "0.27.0"
-pistoncore-glutin_window = "0.54.0"
+piston3d-gfx_voxel = {version = "0.28.0", path = "../gfx_voxel"}
+pistoncore-winit_window = { version = "0.11.0", path="../winit_window", default-features = false}
 rustc-serialize = "0.3.18"
 shader_version = "0.3.0"
 vecmath = "0.3.0"

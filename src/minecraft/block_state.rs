@@ -9,8 +9,7 @@ use std::num::Wrapping;
 use array::*;
 use chunk::{BiomeId, BlockState, Chunk};
 use cube;
-use gfx;
-use gfx_voxel::texture::{AtlasBuilder, ImageSize, Texture};
+use gfx_voxel::texture::AtlasBuilder;
 use minecraft::biome::Biomes;
 use minecraft::data::BLOCK_STATES;
 use minecraft::model::OrthoRotation::*;
@@ -21,9 +20,9 @@ use vecmath::vec3_add;
 
 use self::PolymorphDecision::*;
 
-pub struct BlockStates<R: gfx::Resources> {
+pub struct BlockStates{
     pub models: Vec<ModelAndBehavior>,
-    pub texture: Texture<R>,
+    pub texture: wgpu::Texture,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -111,11 +110,11 @@ impl ModelAndBehavior {
     }
 }
 
-impl<R: gfx::Resources> BlockStates<R> {
+impl BlockStates{
 
-    pub fn load<F: gfx::Factory<R>>(
-        assets: &Path, f: &mut F
-    ) -> BlockStates<R> {
+    pub fn load(
+        assets: &Path, device: &mut wgpu::Device
+    ) -> BlockStates {
         let mut last_id = BLOCK_STATES.last().map_or(0, |state| state.0);
         let mut states = Vec::<Description>::with_capacity(BLOCK_STATES.len().next_power_of_two());
         let mut extras = vec![];
@@ -191,13 +190,13 @@ impl<R: gfx::Resources> BlockStates<R> {
         }
         states.extend(extras.into_iter());
 
-        BlockStates::load_with_states(assets, f, states)
+        BlockStates::load_with_states(assets, device, states)
     }
 
-    fn load_with_states<F: gfx::Factory<R>>(
-        assets: &Path, f: &mut F,
+    fn load_with_states(
+        assets: &Path, device: &mut wgpu::Device,
         states: Vec<Description>
-    ) -> BlockStates<R> {
+    ) -> BlockStates {
         struct Variant {
             model: String,
             rotate_x: OrthoRotation,
@@ -355,8 +354,10 @@ impl<R: gfx::Resources> BlockStates<R> {
         drop(partial_model_cache);
         drop(block_state_cache);
 
-        let texture = atlas.complete(f);
-        let (width, height) = texture.get_size();
+        let (width, height) = atlas.get_size();
+
+        let texture = atlas.complete(device);
+
         let u_unit = 1.0 / (width as f32);
         let v_unit = 1.0 / (height as f32);
 
@@ -384,7 +385,7 @@ impl<R: gfx::Resources> BlockStates<R> {
         }
     }
 
-    pub fn texture(&self) -> &Texture<R> {
+    pub fn texture(&self) -> &wgpu::Texture {
         &self.texture
     }
 
@@ -398,7 +399,7 @@ impl<R: gfx::Resources> BlockStates<R> {
     }
 }
 
-pub fn fill_buffer<R: gfx::Resources>(block_states: &BlockStates<R>,
+pub fn fill_buffer(block_states: &BlockStates,
                    biomes: &Biomes, buffer: &mut Vec<Vertex>,
                    coords: [i32; 3], chunks: [[[&Chunk; 3]; 3]; 3],
                    column_biomes: [[Option<&[[BiomeId; 16]; 16]>; 3]; 3]) {

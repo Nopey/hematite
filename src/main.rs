@@ -3,12 +3,10 @@ extern crate camera_controllers;
 extern crate docopt;
 extern crate flate2;
 extern crate fps_counter;
-#[macro_use] extern crate gfx;
-extern crate gfx_core;
-extern crate gfx_device_gl;
-extern crate gfx_voxel;
+extern crate wgpu;
 extern crate piston;
-extern crate glutin_window;
+extern crate winit_window;
+extern crate gfx_voxel;
 extern crate libc;
 extern crate memmap;
 extern crate rustc_serialize;
@@ -31,11 +29,10 @@ use array::*;
 use docopt::Docopt;
 use piston::event_loop::{ Events, EventLoop, EventSettings };
 use flate2::read::GzDecoder;
-use glutin_window::*;
-use gfx::traits::Device;
+use winit_window::*;
 use shader::Renderer;
 use vecmath::{ vec3_add, vec3_scale, vec3_normalized };
-use piston::window::{ Size, Window, AdvancedWindow, OpenGLWindow,
+use piston::window::{ Size, Window as PistonWindow, AdvancedWindow,
     WindowSettings };
 use piston::input::{ MouseRelativeEvent, PressEvent, UpdateEvent,
     AfterRenderEvent, RenderEvent };
@@ -44,6 +41,7 @@ pub mod minecraft;
 pub mod chunk;
 pub mod shader;
 
+use shader::SizedBuffer;
 use minecraft::biome::Biomes;
 use minecraft::block_state::BlockStates;
 
@@ -65,25 +63,6 @@ struct Args {
     flag_mcversion: String,
 }
 
-fn create_main_targets(dim: gfx::texture::Dimensions) ->
-(gfx::handle::RenderTargetView<
-    gfx_device_gl::Resources, gfx::format::Srgba8>,
- gfx::handle::DepthStencilView<
-    gfx_device_gl::Resources, gfx::format::DepthStencil>) {
-    use gfx_core::memory::Typed;
-    use gfx::format::{DepthStencil, Format, Formatted, Srgba8};
-
-    let color_format: Format = <Srgba8 as Formatted>::get_format();
-    let depth_format: Format = <DepthStencil as Formatted>::get_format();
-    let (output_color, output_stencil) =
-        gfx_device_gl::create_main_targets_raw(dim,
-                                               color_format.0,
-                                               depth_format.0);
-    let output_color = Typed::new(output_color);
-    let output_stencil = Typed::new(output_stencil);
-    (output_color, output_stencil)
-}
-
 fn main() {
     let args: Args = Docopt::new(USAGE)
                             .and_then(|dopt| dopt.decode())
@@ -102,6 +81,9 @@ fn main() {
         mc_path.push(args.arg_world);
         mc_path
     };
+    println!("Loading world... - {}",
+        world.file_name().unwrap().to_str().unwrap()
+    );
 
     let file_name = PathBuf::from(world.join("level.dat"));
     let level_reader = GzDecoder::new(File::open(file_name).unwrap()).unwrap();
@@ -124,30 +106,17 @@ fn main() {
         );
     let region = minecraft::region::Region::open(&region_file).unwrap();
 
-    let loading_title = format!(
-            "Hematite loading... - {}",
-            world.file_name().unwrap().to_str().unwrap()
-        );
-
-    let mut window: GlutinWindow = WindowSettings::new(
-            loading_title,
-            [854, 480])
-            .fullscreen(false)
-            .exit_on_esc(true)
-            .samples(0)
-            .vsync(false)
-            .opengl(shader_version::opengl::OpenGL::V3_2)
-            .build()
-            .unwrap();
-
-    let (mut device, mut factory) = gfx_device_gl::create(|s|
-        window.get_proc_address(s) as *const _
-    );
-
-    let Size { width: w, height: h } = window.size();
-
-    let (target_view, depth_view) = create_main_targets(
-        (w as u16, h as u16, 1, (0 as gfx::texture::NumSamples).into()));
+    // To continue loading minecraft assets, we need a device
+    let instance = wgpu::Instance::new();
+    let adapter = instance.get_adapter(&wgpu::AdapterDescriptor {
+        power_preference: wgpu::PowerPreference::LowPower,
+    });
+    let mut device = adapter.create_device(&wgpu::DeviceDescriptor {
+        extensions: wgpu::Extensions {
+            anisotropic_filtering: false,
+        },
+    });
+    //device in hand, back to the asset loading!
 
     let assets = Path::new("./assets");
 
@@ -155,10 +124,10 @@ fn main() {
     let biomes = Biomes::load(&assets);
 
     // Load block state definitions and models.
-    let block_states = BlockStates::load(&assets, &mut factory);
+    let block_states = BlockStates::load(&assets, &mut device);
 
-	let encoder = factory.create_command_buffer().into();
-    let mut renderer = Renderer::new(factory, encoder, target_view, depth_view, block_states.texture.surface.clone());
+	// let encoder = factory.create_command_buffer().into();
+    // let mut renderer = Renderer::new(factory, encoder, target_view, depth_view, block_states.texture.surface.clone());
 
     let mut chunk_manager = chunk::ChunkManager::new();
 
@@ -178,7 +147,17 @@ fn main() {
             }
         }
     }
-    println!("Finished loading chunks.");
+    println!("Finished loading chunks.");    
+
+    let mut window = WinitWindow::new(
+        &WindowSettings::new("wow guys", [854, 480])
+            .fullscreen(false)
+            .exit_on_esc(true)
+            .samples(0)
+            .vsync(false)
+    );
+
+    let mut renderer = Renderer::new(&device, window.get_window(), &instance, &block_states.texture);
 
     let projection_mat = camera_controllers::CameraPerspective {
         fov: 70.0,
@@ -235,53 +214,54 @@ fn main() {
 
             let view_mat = camera.orthogonal();
             renderer.set_view(view_mat);
-            renderer.clear();
             let mut num_chunks: usize = 0;
             let mut num_sorted_chunks: usize = 0;
             let mut num_total_chunks: usize = 0;
             let start_time = Instant::now();
-            chunk_manager.each_chunk(|cx, cy, cz, _, buffer| {
-                match buffer.borrow_mut().as_mut() {
-                    Some(buffer) => {
-                        num_total_chunks += 1;
+            renderer.render(&mut device, |draw|{
+                chunk_manager.each_chunk(|cx, cy, cz, _, buffer| {
+                    match buffer.borrow_mut().as_mut() {
+                        Some(buffer) => {
+                            num_total_chunks += 1;
 
-                        let inf = INFINITY;
-                        let mut bb_min = [inf, inf, inf];
-                        let mut bb_max = [-inf, -inf, -inf];
-                        let xyz = [cx, cy, cz].map(|x| x as f32 * 16.0);
-                        for &dx in [0.0, 16.0].iter() {
-                            for &dy in [0.0, 16.0].iter() {
-                                for &dz in [0.0, 16.0].iter() {
-                                    use vecmath::col_mat4_transform;
+                            let inf = INFINITY;
+                            let mut bb_min = [inf, inf, inf];
+                            let mut bb_max = [-inf, -inf, -inf];
+                            let xyz = [cx, cy, cz].map(|x| x as f32 * 16.0);
+                            for &dx in [0.0, 16.0].iter() {
+                                for &dy in [0.0, 16.0].iter() {
+                                    for &dz in [0.0, 16.0].iter() {
+                                        use vecmath::col_mat4_transform;
 
-                                    let v = vec3_add(xyz, [dx, dy, dz]);
-                                    let xyzw = col_mat4_transform(view_mat, [v[0], v[1], v[2], 1.0]);
-                                    let v = col_mat4_transform(projection_mat, xyzw);
-                                    let xyz = vec3_scale([v[0], v[1], v[2]], 1.0 / v[3]);
-                                    bb_min = Array::from_fn(|i| bb_min[i].min(xyz[i]));
-                                    bb_max = Array::from_fn(|i| bb_max[i].max(xyz[i]));
+                                        let v = vec3_add(xyz, [dx, dy, dz]);
+                                        let xyzw = col_mat4_transform(view_mat, [v[0], v[1], v[2], 1.0]);
+                                        let v = col_mat4_transform(projection_mat, xyzw);
+                                        let xyz = vec3_scale([v[0], v[1], v[2]], 1.0 / v[3]);
+                                        bb_min = Array::from_fn(|i| bb_min[i].min(xyz[i]));
+                                        bb_max = Array::from_fn(|i| bb_max[i].max(xyz[i]));
+                                    }
+                                }
+                            }
+
+                            let cull_bits: [bool; 3] = Array::from_fn(|i| {
+                                let (min, max) = (bb_min[i], bb_max[i]);
+                                min.signum() == max.signum()
+                                    && min.abs().min(max.abs()) >= 1.0
+                            });
+
+                            if !cull_bits.iter().any(|&cull| cull) {
+                                draw(buffer);
+                                num_chunks += 1;
+
+                                if bb_min[0] < 0.0 && bb_max[0] > 0.0
+                                || bb_min[1] < 0.0 && bb_max[1] > 0.0 {
+                                    num_sorted_chunks += 1;
                                 }
                             }
                         }
-
-                        let cull_bits: [bool; 3] = Array::from_fn(|i| {
-                            let (min, max) = (bb_min[i], bb_max[i]);
-                            min.signum() == max.signum()
-                                && min.abs().min(max.abs()) >= 1.0
-                        });
-
-                        if !cull_bits.iter().any(|&cull| cull) {
-                            renderer.render(buffer);
-                            num_chunks += 1;
-
-                            if bb_min[0] < 0.0 && bb_max[0] > 0.0
-                            || bb_min[1] < 0.0 && bb_max[1] > 0.0 {
-                                num_sorted_chunks += 1;
-                            }
-                        }
+                        None => {}
                     }
-                    None => {}
-                }
+                });
             });
             let end_duration = start_time.elapsed();
             renderer.flush(&mut device);
@@ -301,7 +281,7 @@ fn main() {
         }
 
         if let Some(_) = e.after_render_args() {
-            device.cleanup();
+            // device.cleanup();
         }
 
         if let Some(_) = e.update_args() {
@@ -335,8 +315,14 @@ fn main() {
                         &block_states, &biomes, &mut staging_buffer,
                         coords, chunks, column_biomes
                     );
+                    let vertex_data = &staging_buffer[..];
                     *buffer.borrow_mut() = Some(
-                        renderer.create_buffer(&staging_buffer[..])
+                        SizedBuffer{
+                            buffer: device
+                                .create_buffer_mapped(vertex_data.len(), wgpu::BufferUsageFlags::VERTEX)
+                                .fill_from_slice(&vertex_data),
+                            size: vertex_data.len() as u32
+                        }
                     );
                     staging_buffer.clear();
 

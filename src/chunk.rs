@@ -2,8 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use array::*;
-use shader::Vertex;
-use gfx;
+use shader::SizedBuffer;
 
 #[derive(Copy, Clone)]
 pub struct BlockState {
@@ -46,30 +45,30 @@ pub const EMPTY_CHUNK: &'static Chunk = &Chunk {
     light_levels: [[[LightLevel {value: 0xf0}; SIZE]; SIZE]; SIZE]
 };
 
-pub struct ChunkColumn<R: gfx::Resources> {
+pub struct ChunkColumn {
     pub chunks: Vec<Chunk>,
-    pub buffers: [RefCell<Option<gfx::handle::Buffer<R, Vertex>>>; SIZE],
+    pub buffers: [RefCell<Option<SizedBuffer>>; SIZE],
     pub biomes: [[BiomeId; SIZE]; SIZE]
 }
 
-pub struct ChunkManager<R: gfx::Resources> {
-    chunk_columns: HashMap<(i32, i32), ChunkColumn<R>>
+pub struct ChunkManager {
+    chunk_columns: HashMap<(i32, i32), ChunkColumn>
 }
 
-impl<R: gfx::Resources> ChunkManager<R> {
-    pub fn new() -> ChunkManager<R> {
+impl ChunkManager {
+    pub fn new() -> ChunkManager {
         ChunkManager {
             chunk_columns: HashMap::new()
         }
     }
 
-    pub fn add_chunk_column(&mut self, x: i32, z: i32, c: ChunkColumn<R>) {
+    pub fn add_chunk_column(&mut self, x: i32, z: i32, c: ChunkColumn) {
         self.chunk_columns.insert((x, z), c);
     }
 
     pub fn each_chunk_and_neighbors<'a, F>(&'a self, mut f: F)
         where F: FnMut(/*coords:*/ [i32; 3],
-                       /*buffer:*/ &'a RefCell<Option<gfx::handle::Buffer<R, Vertex>>>,
+                       /*buffer:*/ &'a RefCell<Option<SizedBuffer>>,
                        /*chunks:*/ [[[&'a Chunk; 3]; 3]; 3],
                        /*biomes:*/ [[Option<&'a [[BiomeId; SIZE]; SIZE]>; 3]; 3])
 
@@ -100,7 +99,7 @@ impl<R: gfx::Resources> ChunkManager<R> {
 
     pub fn each_chunk<F>(&self, mut f: F)
         where F: FnMut(/*x:*/ i32, /*y:*/ i32, /*z:*/ i32, /*c:*/ &Chunk, 
-            /*b:*/ &RefCell<Option<gfx::handle::Buffer<R, Vertex>>>)
+            /*b:*/ &RefCell<Option<SizedBuffer>>)
     {
         for (&(x, z), c) in self.chunk_columns.iter() {
             for (y, (c, b)) in c.chunks.iter()

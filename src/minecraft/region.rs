@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::io;
 use std::path::Path;
-use gfx;
 use memmap::{Mmap, Protection};
 
 use array::*;
@@ -42,8 +41,8 @@ impl Region {
         }
     }
 
-    pub fn get_chunk_column<R: gfx::Resources>(&self, x: u8, z: u8)
-                            -> Option<ChunkColumn<R>> {
+    pub fn get_chunk_column(&self, x: u8, z: u8)
+                            -> Option<ChunkColumn> {
         let locations = &self.as_slice()[..4096];
         let i = 4 * ((x % 32) as usize + (z % 32) as usize * 32);
         let start = ((locations[i] as usize) << 16)
