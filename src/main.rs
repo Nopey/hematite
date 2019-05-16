@@ -34,8 +34,7 @@ use shader::Renderer;
 use vecmath::{ vec3_add, vec3_scale, vec3_normalized };
 use piston::window::{ Size, Window as PistonWindow, AdvancedWindow,
     WindowSettings };
-use piston::input::{ MouseRelativeEvent, PressEvent, UpdateEvent,
-    AfterRenderEvent, RenderEvent };
+use piston::input::{ MouseRelativeEvent, PressEvent, UpdateEvent, RenderEvent };
 
 pub mod minecraft;
 pub mod chunk;
@@ -125,9 +124,6 @@ fn main() {
 
     // Load block state definitions and models.
     let block_states = BlockStates::load(&assets, &mut device);
-
-	// let encoder = factory.create_command_buffer().into();
-    // let mut renderer = Renderer::new(factory, encoder, target_view, depth_view, block_states.texture.surface.clone());
 
     let mut chunk_manager = chunk::ChunkManager::new();
 
@@ -264,7 +260,6 @@ fn main() {
                 });
             });
             let end_duration = start_time.elapsed();
-            renderer.flush(&mut device);
             let frame_end_duration = start_time.elapsed();
 
             let fps = fps_counter.tick();
@@ -278,10 +273,6 @@ fn main() {
                     fps, world.file_name().unwrap().to_str().unwrap()
                 );
             window.set_title(title);
-        }
-
-        if let Some(_) = e.after_render_args() {
-            // device.cleanup();
         }
 
         if let Some(_) = e.update_args() {
